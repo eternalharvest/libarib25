@@ -1,6 +1,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__ARM_FEATURE_CRC32)
+#	include <arm_acle.h>
+#endif
+
 #include "ts_section_parser.h"
 #include "ts_section_parser_error_code.h"
 
@@ -704,9 +708,37 @@ static void clear_ts_section_list(TS_SECTION_LIST *list)
 
 static uint32_t crc32(uint8_t *head, uint8_t *tail)
 {
-	uint32_t crc;
-	uint8_t *p;
+	uint32_t crc = 0xffffffff;
+	const uint8_t *p = head;
 
+#if defined(__ARM_FEATURE_CRC32)
+
+	size_t length;
+	const uint32_t *pw;
+	const uint16_t *ph;
+
+	if ((length > 0) && ((ptrdiff_t)p & 1)) {
+		crc = __crc32b(crc, *p++);
+	}
+
+	if ((length > 2) && ((ptrdiff_t)p & 2)) {
+		ph = (const uint16_t *)p;
+		crc = __crc32h(crc, *ph++);
+		p = (const uint8_t *)ph;
+	}
+
+	for (pw = (const uint32_t *)p; length >= sizeof (uint32_t); length -= sizeof (uint32_t)) {
+		crc = __crc32w(crc, *pw++);
+	}
+
+	for (ph = (const uint16_t *)pw; length >= sizeof (uint16_t); length -= sizeof (uint16_t)) {
+		crc = __crc32h(crc, *ph++);
+	}
+
+	for (p=(const uint8_t *)ph; p < tail;) {
+		crc = __crc32b(crc, *p++);
+	}
+#else
 	static const uint32_t table[256] = {
 		0x00000000, 0x04C11DB7, 0x09823B6E, 0x0D4326D9,
 		0x130476DC, 0x17C56B6B, 0x1A864DB2, 0x1E475005,
@@ -789,13 +821,10 @@ static uint32_t crc32(uint8_t *head, uint8_t *tail)
 		0xBCB4666D, 0xB8757BDA, 0xB5365D03, 0xB1F740B4,
 	};
 	
-	crc = 0xffffffff;
-
-	p = head;
-	while(p < tail){
-		crc = (crc << 8) ^ table[ ((crc >> 24) ^ p[0]) & 0xff ];
-		p += 1;
+	while (p < tail){
+		crc = (crc << 8) ^ table[ ((crc >> 24) ^ *p++) & 0xff ];
 	}
+#endif
 
 	return crc;
 }
